@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rick Explains</title>
+  <meta name="description" content="Paste a link. Get a vertical video of a cranky genius translating it into normal human language." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1><span class="badge">RICK</span> EXPLAINS</h1>
+    <p>Paste a link. Get a 9:16 video of a cranky genius translating it into normal human language.</p>
+    <p id="status-line" class="muted"></p>
+  </header>
+
+  <main>
+    <section class="panel" id="step-input">
+      <h2>1. Feed him the news</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-tab="url">Link</button>
+        <button role="tab" class="tab" data-tab="text">Paste text</button>
+      </div>
+      <input id="url" type="url" placeholder="https://example.com/some-ai-announcement" />
+      <textarea id="text" rows="8" placeholder="Paste the article or announcement here…" hidden></textarea>
+      <div class="row">
+        <label>Length
+          <select id="seconds">
+            <option value="30">~30 s</option>
+            <option value="60" selected>~60 s</option>
+            <option value="90">~90 s</option>
+          </select>
+        </label>
+        <button id="go" class="primary">Make it make sense</button>
+      </div>
+      <p id="input-msg" class="msg"></p>
+    </section>
+
+    <section class="panel" id="step-script" hidden>
+      <h2>2. Check the script</h2>
+      <p class="muted">Edit anything before rendering. Rick gets facts from the article only, but give it a once-over.</p>
+      <label class="block">Title <input id="title" /></label>
+      <div id="beats"></div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="voice" checked /> Voice</label>
+        <label class="check"><input type="checkbox" id="monitor" checked /> Hear it while rendering</label>
+        <button id="render" class="primary">Render video</button>
+      </div>
+      <p id="script-msg" class="msg"></p>
+    </section>
+
+    <section class="panel" id="step-render" hidden>
+      <h2>3. Video</h2>
+      <p class="muted">Renders in real time. Keep this tab in front until it finishes.</p>
+      <div class="stage">
+        <canvas id="canvas" width="1080" height="1920"></canvas>
+        <video id="result" controls playsinline hidden></video>
+      </div>
+      <progress id="progress" max="1" value="0"></progress>
+      <div class="row">
+        <a id="download" class="primary button" hidden>Download</a>
+        <button id="again">Render again</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="muted">Rick is an original character. Scripts written by Claude; double-check anything important against the source.</footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

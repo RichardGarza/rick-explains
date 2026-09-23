@@ -2,6 +2,7 @@ import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
+import { fetch as undiciFetch, EnvHttpProxyAgent } from "undici";
 import { SCRIPT_SCHEMA, SYSTEM_PROMPT, DEMO_SCRIPT } from "./script.js";
 
 const PORT = process.env.PORT || 3000;
@@ -20,6 +21,11 @@ app.get("/api/config", (_req, res) => {
   res.json({ claude: hasClaude, tts, model: MODEL });
 });
 
+// jsdom registers undici 8 as the global dispatcher, which Node's bundled fetch
+// mishandles (compressed bodies, redirects). Use undici's own fetch for pages.
+// EnvHttpProxyAgent honours HTTP(S)_PROXY / NO_PROXY and goes direct otherwise.
+const pageAgent = new EnvHttpProxyAgent();
+
 // 1. Link or pasted text -> clean article text
 app.post("/api/extract", async (req, res) => {
   const { url, text } = req.body ?? {};
@@ -31,12 +37,13 @@ app.post("/api/extract", async (req, res) => {
     const parsed = new URL(url);
     if (!/^https?:$/.test(parsed.protocol)) throw new Error("Only http(s) links work.");
 
-    const r = await fetch(parsed, {
+    const r = await undiciFetch(parsed, {
+      dispatcher: pageAgent,
       headers: { "user-agent": "Mozilla/5.0 (RickExplains; +article-reader)" },
       redirect: "follow",
       signal: AbortSignal.timeout(20_000),
     });
-    if (!r.ok) throw new Error(`That page returned HTTP ${r.status}.`);
+    if (!r.ok) throw new Error(`That page returned HTTP ${r.status}. Some sites block bots; paste the text instead.`);
     const html = await r.text();
     const dom = new JSDOM(html, { url: parsed.href });
     const article = new Readability(dom.window.document).parse();
