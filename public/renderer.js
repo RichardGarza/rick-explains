@@ -459,37 +459,25 @@ function drawRick(g, t, { talk, mood }) {
   g.fillStyle = C.skinShade;
   g.fillRect(-60, 120, 120, 90);
 
-  // hair (behind head): big radial spikes
-  const spikes = 15;
-  g.fillStyle = C.hairShade;
-  g.beginPath();
-  for (let i = 0; i <= spikes; i++) {
-    const a = Math.PI + (i / spikes) * Math.PI;
-    const wob = Math.sin(t * 3 + i) * 8;
-    const r1 = 250 + (i % 2 ? 90 : 20) + wob;
-    const r0 = 170;
-    const a0 = a - Math.PI / spikes / 2;
-    g.lineTo(Math.cos(a0) * r0 * 1.1, Math.sin(a0) * r0 - 60);
-    g.lineTo(Math.cos(a) * r1 * 1.15, Math.sin(a) * r1 - 60);
-  }
-  g.lineTo(260, 0);
-  g.lineTo(-260, 0);
-  g.closePath();
-  g.fill();
-  g.fillStyle = C.hair;
-  g.beginPath();
-  for (let i = 0; i <= spikes; i++) {
-    const a = Math.PI + (i / spikes) * Math.PI;
-    const wob = Math.sin(t * 3 + i * 1.7) * 6;
-    const r1 = 220 + (i % 2 ? 60 : 10) + wob;
-    const a0 = a - Math.PI / spikes / 2;
-    g.lineTo(Math.cos(a0) * 160 * 1.1, Math.sin(a0) * 160 - 60);
-    g.lineTo(Math.cos(a) * r1 * 1.12, Math.sin(a) * r1 - 60);
-  }
-  g.lineTo(230, -20);
-  g.lineTo(-230, -20);
-  g.closePath();
-  g.fill();
+  // hair (behind head): two layers of radial spikes, closed through the skull centre
+  const hair = (color, base, long, short, wobAmt, phase) => {
+    const spikes = 16;
+    const a0 = Math.PI * 0.88, a1 = Math.PI * 2.12;
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(0, -40);
+    for (let i = 0; i <= spikes; i++) {
+      const a = a0 + (i / spikes) * (a1 - a0);
+      const valley = a - (a1 - a0) / spikes / 2;
+      const tip = base + (i % 2 ? long : short) + Math.sin(t * 3 + i * phase) * wobAmt;
+      if (i > 0) g.lineTo(Math.cos(valley) * 175, Math.sin(valley) * 175 - 50);
+      g.lineTo(Math.cos(a) * tip * 1.12, Math.sin(a) * tip - 50);
+    }
+    g.closePath();
+    g.fill();
+  };
+  hair(C.hairShade, 250, 90, 20, 8, 1);
+  hair(C.hair, 220, 60, 10, 6, 1.7);
 
   // ears
   g.fillStyle = C.skinShade;

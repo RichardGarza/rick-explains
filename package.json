@@ -5,12 +5,12 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "module",
   "private": "true",
   "dependencies": {
@@ -19,5 +19,8 @@
     "express": "^5.2.1",
     "jsdom": "^30.1.1",
     "undici": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=22.9"
   }
 }
