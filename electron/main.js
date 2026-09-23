@@ -1,10 +1,10 @@
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, net } from "electron";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -90,6 +90,65 @@ function waitForUrl(url, timeoutMs = 60000) {
   });
 }
 
+
+/** Chromium network stack for article pages — Electron/Node undici+BoringSSL
+ *  fails hard on some CDNs (e.g. WaPo HTTP/2 INTERNAL_ERROR). */
+let fetchHelperServer = null;
+let fetchHelperUrl = null;
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+function startFetchHelper() {
+  return new Promise((resolve, reject) => {
+    const srv = createHttpServer(async (req, res) => {
+      const send = (code, obj) => {
+        const body = JSON.stringify(obj);
+        res.writeHead(code, {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        });
+        res.end(body);
+      };
+      if (req.method === "GET" && req.url === "/health") {
+        return send(200, { ok: true });
+      }
+      if (req.method !== "POST" || req.url !== "/fetch") {
+        return send(404, { error: "not found" });
+      }
+      let raw = "";
+      try {
+        for await (const chunk of req) raw += chunk;
+        const { url } = JSON.parse(raw || "{}");
+        if (!url) return send(400, { error: "url required" });
+        const parsed = new URL(url);
+        if (!/^https?:$/.test(parsed.protocol)) {
+          return send(400, { error: "Only http(s) links work." });
+        }
+        const r = await net.fetch(parsed.href, {
+          headers: {
+            "User-Agent": BROWSER_UA,
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+        });
+        const html = await r.text();
+        send(200, { status: r.status, url: r.url, html });
+      } catch (err) {
+        send(502, { error: err?.message || String(err) });
+      }
+    });
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      fetchHelperServer = srv;
+      fetchHelperUrl = `http://127.0.0.1:${port}`;
+      console.log(`[fetch-helper] Chromium net.fetch on ${fetchHelperUrl}`);
+      resolve(fetchHelperUrl);
+    });
+    srv.on("error", reject);
+  });
+}
+
 let serverProcess = null;
 let ollamaProcess = null;
 let mainWindow = null;
@@ -128,6 +187,15 @@ function killChild(proc, label) {
 function killAllChildren() {
   killChild(serverProcess, "server");
   killChild(ollamaProcess, "ollama");
+  if (fetchHelperServer) {
+    try {
+      fetchHelperServer.close();
+    } catch {
+      /* ignore */
+    }
+    fetchHelperServer = null;
+    fetchHelperUrl = null;
+  }
 }
 
 async function startEmbeddedOllama() {
@@ -209,6 +277,9 @@ async function startServer(ollamaPort) {
     ELECTRON_RUN_AS_NODE: "1",
     PORT: String(port),
   };
+  if (fetchHelperUrl) {
+    env.ELECTRON_FETCH_HELPER = fetchHelperUrl;
+  }
 
   if (ollamaPort) {
     env.OLLAMA_URL = `http://127.0.0.1:${ollamaPort}`;
@@ -289,6 +360,7 @@ function createWindow(port) {
 
 async function boot() {
   try {
+    await startFetchHelper();
     let ollamaPort = null;
     // Always prefer bundled Ollama when available (packaged or vendor present).
     if (bundledOllamaBin() && bundledModelsDir()) {

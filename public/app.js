@@ -72,7 +72,12 @@ $("go").addEventListener("click", async () => {
     msg("input-msg", script.demo ? "Demo script loaded. Start Ollama (with a model) or set ANTHROPIC_API_KEY for real ones." : script.note || "Script ready.");
     showScript();
   } catch (err) {
-    msg("input-msg", err.message, true);
+    const raw = String(err?.message || err);
+    const friendly =
+      raw === "Failed to fetch" || raw === "NetworkError when attempting to fetch resource."
+        ? "Couldn't reach the local Rick Explains server. Quit the app and open it again."
+        : raw;
+    msg("input-msg", friendly, true);
   } finally {
     $("go").disabled = false;
   }

@@ -92,6 +92,60 @@ app.get("/api/voices", async (_req, res) => {
 // mishandles (compressed bodies, redirects). Use undici's own fetch for pages.
 // EnvHttpProxyAgent honours HTTP(S)_PROXY / NO_PROXY and goes direct otherwise.
 const pageAgent = new EnvHttpProxyAgent();
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const PAGE_HEADERS = {
+  "user-agent": BROWSER_UA,
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "accept-language": "en-US,en;q=0.9",
+};
+
+function explainFetchError(err) {
+  const cause = err?.cause;
+  const detail = cause?.code || cause?.message || err?.message || "network error";
+  const msg = String(err?.message || "");
+  if (/fetch failed/i.test(msg) || cause) {
+    return (
+      `Couldn't reach that page (${detail}). ` +
+      "Some sites block automated readers — paste the article text instead."
+    );
+  }
+  return msg || "Couldn't fetch that page.";
+}
+
+/** Prefer Chromium net.fetch helper (Electron main) — BoringSSL/undici breaks on some CDNs. */
+async function fetchPageHtml(targetUrl) {
+  const href = String(targetUrl);
+  const helper = process.env.ELECTRON_FETCH_HELPER?.replace(/\/$/, "");
+  if (helper) {
+    try {
+      const r = await fetch(`${helper}/fetch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: href }),
+        signal: AbortSignal.timeout(45_000),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `helper HTTP ${r.status}`);
+      return { status: data.status, finalUrl: data.url || href, html: data.html ?? "" };
+    } catch (err) {
+      console.warn("Chromium fetch helper failed, falling back to undici:", err.message);
+    }
+  }
+
+  try {
+    const r = await undiciFetch(href, {
+      dispatcher: pageAgent,
+      headers: PAGE_HEADERS,
+      redirect: "follow",
+      signal: AbortSignal.timeout(25_000),
+    });
+    const html = await r.text();
+    return { status: r.status, finalUrl: String(r.url || href), html };
+  } catch (err) {
+    throw new Error(explainFetchError(err));
+  }
+}
 
 // 1. Link or pasted text -> clean article text
 app.post("/api/extract", async (req, res) => {
@@ -104,23 +158,26 @@ app.post("/api/extract", async (req, res) => {
     const parsed = new URL(url);
     if (!/^https?:$/.test(parsed.protocol)) throw new Error("Only http(s) links work.");
 
-    const r = await undiciFetch(parsed, {
-      dispatcher: pageAgent,
-      headers: { "user-agent": "Mozilla/5.0 (RickExplains; +article-reader)" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!r.ok) throw new Error(`That page returned HTTP ${r.status}. Some sites block bots; paste the text instead.`);
-    const html = await r.text();
-    const dom = new JSDOM(html, { url: parsed.href });
+    const { status, finalUrl, html } = await fetchPageHtml(parsed.href);
+    if (!status || status >= 400) {
+      throw new Error(
+        `That page returned HTTP ${status || "?"}. Some sites block bots; paste the text instead.`
+      );
+    }
+    const base = finalUrl || parsed.href;
+    const dom = new JSDOM(html, { url: base });
     const article = new Readability(dom.window.document).parse();
     const body = article?.textContent?.replace(/\n{3,}/g, "\n\n").trim();
     if (!body || body.length < 200) {
       throw new Error("Couldn't pull readable text from that page (paywall or JS-only site?). Paste the text instead.");
     }
-    res.json({ title: article.title ?? "", source: parsed.hostname.replace(/^www\./, ""), text: body });
+    const host = new URL(base).hostname.replace(/^www\./, "");
+    res.json({ title: article.title ?? "", source: host, text: body });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    const message = /fetch failed/i.test(String(err?.message || ""))
+      ? explainFetchError(err)
+      : err.message;
+    res.status(400).json({ error: message });
   }
 });
 
@@ -292,8 +349,8 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
-  console.log(`Rick Explains on http://localhost:${PORT}`);
+app.listen(PORT, "127.0.0.1", async () => {
+  console.log(`Rick Explains on http://127.0.0.1:${PORT}`);
   if (hasClaude) console.log(`  script: Claude (${MODEL})`);
   else {
     const { reachable, models } = await ollamaStatus();
