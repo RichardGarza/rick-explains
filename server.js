@@ -3,7 +3,28 @@ import Anthropic from "@anthropic-ai/sdk";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import { fetch as undiciFetch, EnvHttpProxyAgent } from "undici";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SCRIPT_SCHEMA, SYSTEM_PROMPT, DEMO_SCRIPT } from "./script.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** Local Kokoro ONNX dir (bundled) when present; else Hub id. */
+function resolveKokoroModelId() {
+  const candidates = [
+    process.env.KOKORO_MODEL_PATH,
+    join(__dirname, "vendor", "kokoro-model"),
+    join(__dirname, "..", "kokoro-model"),
+    join(__dirname, "kokoro-model"),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (existsSync(join(p, "config.json")) && existsSync(join(p, "onnx", "model_quantized.onnx"))) {
+      return p;
+    }
+  }
+  return "onnx-community/Kokoro-82M-v1.0-ONNX";
+}
 
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5";
@@ -198,14 +219,26 @@ async function ollamaScript(model, userPrompt, text, requestedModel) {
   return { ...script, provider: "ollama", model: useModel, note };
 }
 
-// Kokoro: an 82M-parameter speech model that runs on the CPU in this process.
-// The first call downloads ~90 MB of weights (cached under node_modules) and takes a minute.
+// Kokoro: 82M-parameter speech model on CPU. Prefer bundled local weights (offline).
 let kokoroPromise = null;
 function kokoro() {
-  kokoroPromise ??= import("kokoro-js").then(({ KokoroTTS }) =>
-    KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", { dtype: "q8", device: "cpu" }),
-  ).catch((err) => {
-    kokoroPromise = null; // let the next call retry (e.g. after a failed download)
+  kokoroPromise ??= (async () => {
+    const [{ KokoroTTS }, { env }] = await Promise.all([
+      import("kokoro-js"),
+      import("@huggingface/transformers"),
+    ]);
+    const modelId = resolveKokoroModelId();
+    const local = typeof modelId === "string" && (modelId.startsWith("/") || /^[A-Za-z]:[\\/]/.test(modelId));
+    if (local) {
+      env.allowLocalModels = true;
+      env.useBrowserCache = false;
+      // Prefer the given directory; do not hit the network.
+      env.allowRemoteModels = false;
+    }
+    console.log(`  Kokoro loading from ${local ? "local path" : "Hub"}: ${modelId}`);
+    return KokoroTTS.from_pretrained(modelId, { dtype: "q8", device: "cpu" });
+  })().catch((err) => {
+    kokoroPromise = null; // let the next call retry
     throw err;
   });
   return kokoroPromise;

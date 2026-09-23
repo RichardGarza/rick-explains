@@ -412,7 +412,7 @@ function drawCaptions(g, b, t) {
   });
 }
 
-// Original character: wild white hair, brass goggles on forehead, stubble, lab coat.
+// Wild white hair, brass goggles on forehead, stubble, lab coat.
 function drawRick(g, t, { talk, mood }) {
   const cx = W / 2;
   const bob = Math.sin(t * 2.2) * 6 + talk * 10;

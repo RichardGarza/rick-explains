@@ -2,17 +2,22 @@
   "name": "rick-explains",
   "version": "1.0.0",
   "description": "Paste a link, get a Rick-explains vertical video",
-  "main": "index.js",
+  "main": "electron/main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node --env-file-if-exists=.env server.js",
-    "dev": "node --watch --env-file-if-exists=.env server.js"
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "electron": "electron .",
+    "dist": "electron-builder --mac dir",
+    "dist:dmg": "electron-builder --mac dmg",
+    "bundle:vendor": "bash scripts/bundle-vendor.sh",
+    "dist:prepare": "bash scripts/bundle-vendor.sh"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "type": "module",
-  "private": "true",
+  "private": true,
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "@mozilla/readability": "^0.6.0",
@@ -23,5 +28,79 @@
   },
   "engines": {
     "node": ">=22.9"
+  },
+  "build": {
+    "appId": "com.richardgarza.rick-explains",
+    "productName": "Rick Explains",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      {
+        "from": "electron",
+        "to": "electron",
+        "filter": [
+          "main.js"
+        ]
+      },
+      {
+        "from": "package.json",
+        "to": "package.json"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": ".",
+        "to": "rick-explains",
+        "filter": [
+          "server.js",
+          "script.js",
+          "public/**/*",
+          "package.json",
+          "package-lock.json",
+          "node_modules/**/*",
+          "!.env",
+          ".env.example",
+          "!dist{,/**/*}",
+          "!electron{,/**/*}",
+          "!vendor{,/**/*}"
+        ]
+      },
+      {
+        "from": "node_modules",
+        "to": "rick-explains/node_modules"
+      },
+      {
+        "from": "vendor/ollama",
+        "to": "ollama"
+      },
+      {
+        "from": "vendor/ollama-models",
+        "to": "ollama-models"
+      },
+      {
+        "from": "vendor/kokoro-model",
+        "to": "kokoro-model",
+        "filter": [
+          "**/*",
+          "!.cache{,/**/*}"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dir"
+      ],
+      "identity": null,
+      "gatekeeperAssess": false
+    },
+    "asar": false,
+    "npmRebuild": false,
+    "afterPack": "./electron/afterPack.cjs"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
   }
 }

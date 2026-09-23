@@ -2,3 +2,9 @@ node_modules/
 .env
 *.log
 .DS_Store
+dist/
+
+# Large runtime bundles prepared by scripts/bundle-vendor.sh (not for git)
+vendor/ollama/
+vendor/ollama-models/
+vendor/kokoro-model/
