@@ -632,7 +632,7 @@ export async function render(plan, { canvas, ctx, record = true, monitor = true,
     const stream = new MediaStream([...canvas.captureStream(FPS).getVideoTracks(), ...recDest.stream.getAudioTracks()]);
     mime = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm"]
       .find((m) => MediaRecorder.isTypeSupported(m)) || "";
-    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4_000_000 });
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.start(1000);
   }
