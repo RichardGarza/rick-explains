@@ -28,26 +28,43 @@ link or text ─▶ /api/extract ─▶ /api/script ─▶ /api/tts (per beat) �
 
 Rendering happens in real time, so a 60-second video takes about 60 seconds. Keep the tab in front while it renders, because background tabs throttle animation.
 
-## Run it
+## Run it free on a Mac (no API keys)
 
-Requires Node 22.9 or newer.
+Requires Node 22.9 or newer (`brew install node`) and [Ollama](https://ollama.com/download) for the script writer.
 
 ```bash
-npm install
-cp .env.example .env   # then fill in keys
-npm start              # http://localhost:3000
+# 1. a local model for writing scripts (about 5 GB, one time)
+ollama pull llama3.1:8b        # 16 GB Macs. On 8 GB use: ollama pull llama3.2:3b
+
+# 2. the app
+git clone https://github.com/RichardGarza/rick-explains
+cd rick-explains && npm install
+npm start                      # http://localhost:3000
 ```
 
-| Env var | Needed? | What it does |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | For real scripts | Without it, the app runs in **demo mode** with a built-in sample script, so you can still try the renderer. |
-| `ELEVENLABS_API_KEY` | One voice key, optional | Best voice quality. Set `ELEVENLABS_VOICE_ID` to pick or design a voice. |
-| `OPENAI_API_KEY` | One voice key, optional | `gpt-4o-mini-tts` with a gravelly-scientist style prompt. |
-| `CLAUDE_MODEL` | No | Defaults to `claude-opus-5`. |
+That's it. With no keys set, the app uses:
 
-With no voice key, videos have captions and a mouth-flap animation but no audio.
+- **Ollama** for the script. It picks the best installed model automatically (`OLLAMA_MODEL` overrides it), and the page shows a model picker when you have more than one.
+- **Kokoro** for the voice: an 82 MB speech model that runs on your CPU inside the server. The first start downloads it (about 90 MB). Pick Rick's voice from the dropdown on the page. `KOKORO_VOICE` and `KOKORO_SPEED` set the defaults (`am_fenrir`, `1.15`).
 
-**About the voice:** Rick is meant to have the *vibe* of a cranky cartoon genius. Don't clone a real actor's voice. Design your own voice (ElevenLabs Voice Design works well for this) and put its ID in `ELEVENLABS_VOICE_ID`.
+Rough timing on an Apple Silicon Mac: 30 to 90 seconds for the script, about half of real time for the voice, then the video renders in real time. Local models are dumber than Claude, so read the script before rendering; you can edit every line.
+
+Long articles: the local model reads the first 40,000 characters (about 6,000 words) and the page tells you when that happened.
+
+## Optional paid upgrades
+
+Any key you set takes over from the free option automatically. Copy `.env.example` to `.env` and fill in what you want.
+
+| Env var | What it does |
+|---|---|
+| `ANTHROPIC_API_KEY` | Claude writes the scripts instead of the local model. Sharper and funnier. `CLAUDE_MODEL` defaults to `claude-opus-5`. |
+| `ELEVENLABS_API_KEY` | Best voice quality. Set `ELEVENLABS_VOICE_ID` to pick or design a voice. |
+| `OPENAI_API_KEY` | `gpt-4o-mini-tts` with a gravelly-scientist style prompt. |
+| `OLLAMA_URL` | Where Ollama runs, if not `http://127.0.0.1:11434`. |
+
+With no keys and no Ollama, the app runs in **demo mode** with a built-in sample script, so you can still try the renderer.
+
+**About the voice:** Rick is meant to have the *vibe* of a cranky cartoon genius. Don't clone a real actor's voice.
 
 ## Project layout
 
@@ -68,6 +85,7 @@ public/renderer.js  Canvas scene, character, captions, burp synth, recording
 
 ## Known limits
 
+- Local models sometimes write a flat joke or a slightly off headline. Edit before rendering.
 - Paywalled pages and JavaScript-only pages often can't be extracted. Some sites block bots too. For those, paste the text instead.
 - Articles over about 400K characters are rejected rather than silently truncated.
 - The MP4/WebM format depends on what the browser's `MediaRecorder` supports.
@@ -75,6 +93,7 @@ public/renderer.js  Canvas scene, character, captions, burp synth, recording
 
 ## Ideas / roadmap
 
+- A double-clickable Mac app that bundles the server, the voice model and a local LLM, so nothing else needs installing.
 - Server-side rendering (headless Chromium or Remotion) so rendering doesn't need an open tab and can run as a batch job.
 - A "today's AI news" mode that pulls a few RSS feeds and makes one video per story.
 - Word-level timestamps from the TTS provider for exact caption sync.
