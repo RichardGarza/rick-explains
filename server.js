@@ -9,16 +9,62 @@ const PORT = process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5";
 const MAX_ARTICLE_CHARS = 400_000; // ~100K tokens; refuse (don't truncate) anything bigger
 
+// Script writer: Claude if there's a key, otherwise a local model through Ollama.
 const hasClaude = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-const tts = process.env.ELEVENLABS_API_KEY ? "elevenlabs" : process.env.OPENAI_API_KEY ? "openai" : null;
 const claude = hasClaude ? new Anthropic() : null;
+const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
+// Local models get slower and dumber with long inputs, so they read the start of a long article.
+const LOCAL_MAX_CHARS = 40_000;
+// Small local models in rough order of how well they do at this job.
+const OLLAMA_PREFERRED = ["llama3.1", "qwen2.5", "gemma3", "mistral", "llama3.2", "phi4"];
+
+// Voice: a paid API if there's a key, otherwise Kokoro running locally in this process.
+const tts = process.env.ELEVENLABS_API_KEY ? "elevenlabs" : process.env.OPENAI_API_KEY ? "openai" : "kokoro";
+const KOKORO_VOICE = process.env.KOKORO_VOICE || "am_fenrir";
+const KOKORO_SPEED = Number(process.env.KOKORO_SPEED) || 1.15;
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static("public"));
 
-app.get("/api/config", (_req, res) => {
-  res.json({ claude: hasClaude, tts, model: MODEL });
+async function ollamaStatus() {
+  try {
+    const r = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(1500) });
+    if (!r.ok) return { reachable: false, models: [] };
+    const models = ((await r.json()).models ?? []).map((m) => m.name);
+    return { reachable: true, models };
+  } catch {
+    return { reachable: false, models: [] };
+  }
+}
+
+function pickOllamaModel(models) {
+  if (process.env.OLLAMA_MODEL) return process.env.OLLAMA_MODEL;
+  for (const pref of OLLAMA_PREFERRED) {
+    const hit = models.find((m) => m.startsWith(pref));
+    if (hit) return hit;
+  }
+  return models[0] ?? null;
+}
+
+app.get("/api/config", async (_req, res) => {
+  const ollama = hasClaude ? null : await ollamaStatus();
+  const script = hasClaude
+    ? { provider: "claude", model: MODEL }
+    : ollama.reachable && ollama.models.length
+      ? { provider: "ollama", model: pickOllamaModel(ollama.models), models: ollama.models }
+      : { provider: "demo", ollamaReachable: ollama.reachable };
+  res.json({ script, voice: { provider: tts, voice: tts === "kokoro" ? KOKORO_VOICE : undefined } });
+});
+
+app.get("/api/voices", async (_req, res) => {
+  if (tts !== "kokoro") return res.json([]);
+  try {
+    const k = await kokoro();
+    res.json(Object.entries(k.voices).map(([id, v]) => ({ id, name: v.name, gender: v.gender, language: v.language })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // jsdom registers undici 8 as the global dispatcher, which Node's bundled fetch
@@ -64,7 +110,22 @@ app.post("/api/script", async (req, res) => {
   if (text.length > MAX_ARTICLE_CHARS) {
     return res.status(413).json({ error: `Article is ${text.length.toLocaleString()} chars; max is ${MAX_ARTICLE_CHARS.toLocaleString()}. Paste the part you care about.` });
   }
-  if (!claude) return res.json({ ...DEMO_SCRIPT, demo: true });
+  const userPrompt =
+    `Target length: about ${seconds} seconds of narration.\n` +
+    `Source: ${source || "pasted text"}\nTitle: ${title || "(none)"}\n\n`;
+
+  if (!claude) {
+    const { reachable, models } = await ollamaStatus();
+    const model = reachable ? pickOllamaModel(models) : null;
+    if (!model) return res.json({ ...DEMO_SCRIPT, demo: true, ollamaReachable: reachable });
+    try {
+      const script = await ollamaScript(model, userPrompt, text, req.body?.model);
+      return res.json(script);
+    } catch (err) {
+      console.error(err);
+      return res.status(502).json({ error: err.message });
+    }
+  }
 
   try {
     const response = await claude.beta.messages.create({
@@ -77,10 +138,7 @@ app.post("/api/script", async (req, res) => {
       messages: [
         {
           role: "user",
-          content:
-            `Target length: about ${seconds} seconds of narration.\n` +
-            `Source: ${source || "pasted text"}\nTitle: ${title || "(none)"}\n\n` +
-            `<article>\n${text}\n</article>`,
+          content: `${userPrompt}<article>\n${text}\n</article>`,
         },
       ],
     });
@@ -100,13 +158,71 @@ app.post("/api/script", async (req, res) => {
   }
 });
 
+// Local model through Ollama's chat API. `format` takes a JSON schema and Ollama
+// constrains the output to it, so even small models return valid script JSON.
+async function ollamaScript(model, userPrompt, text, requestedModel) {
+  const useModel = requestedModel || model;
+  let note = "";
+  if (text.length > LOCAL_MAX_CHARS) {
+    text = text.slice(0, LOCAL_MAX_CHARS);
+    note = `Long article: the local model only read the first ${LOCAL_MAX_CHARS.toLocaleString()} characters.`;
+  }
+  // Room for the article plus the answer; a too-small context silently drops the start of the prompt.
+  const num_ctx = Math.min(32768, Math.max(8192, Math.ceil(text.length / 3) + 3000));
+  const r = await fetch(`${OLLAMA_URL}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: useModel,
+      stream: false,
+      format: SCRIPT_SCHEMA,
+      options: { temperature: 0.8, num_ctx, num_predict: 4000 },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: `${userPrompt}<article>\n${text}\n</article>\n\nRespond with the script as JSON.` },
+      ],
+    }),
+    signal: AbortSignal.timeout(15 * 60_000),
+  });
+  if (!r.ok) throw new Error(`Ollama returned HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const data = await r.json();
+  if (data.done_reason === "length") throw new Error("The local model ran out of room mid-script. Try a shorter length.");
+  let script;
+  try {
+    script = JSON.parse(data.message?.content ?? "");
+  } catch {
+    throw new Error("The local model didn't return valid script JSON. Try again or a different model.");
+  }
+  if (!Array.isArray(script.beats) || !script.beats.length) throw new Error("The local model returned an empty script. Try again.");
+  script.beats = script.beats.filter((b) => b?.narration?.trim());
+  return { ...script, provider: "ollama", model: useModel, note };
+}
+
+// Kokoro: an 82M-parameter speech model that runs on the CPU in this process.
+// The first call downloads ~90 MB of weights (cached under node_modules) and takes a minute.
+let kokoroPromise = null;
+function kokoro() {
+  kokoroPromise ??= import("kokoro-js").then(({ KokoroTTS }) =>
+    KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", { dtype: "q8", device: "cpu" }),
+  ).catch((err) => {
+    kokoroPromise = null; // let the next call retry (e.g. after a failed download)
+    throw err;
+  });
+  return kokoroPromise;
+}
+
 // 3. One narration line -> speech audio
 app.post("/api/tts", async (req, res) => {
   const text = String(req.body?.text ?? "").slice(0, 2000);
   if (!text.trim()) return res.status(400).json({ error: "No text." });
-  if (!tts) return res.status(501).json({ error: "No TTS key configured." });
-
   try {
+    if (tts === "kokoro") {
+      const k = await kokoro();
+      const voice = req.body?.voice && k.voices[req.body.voice] ? req.body.voice : KOKORO_VOICE;
+      const audio = await k.generate(text, { voice, speed: KOKORO_SPEED });
+      res.set("content-type", "audio/wav");
+      return res.send(Buffer.from(audio.toWav()));
+    }
     let r;
     if (tts === "elevenlabs") {
       const voice = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB"; // stock "Adam"; swap for your own voice
@@ -143,8 +259,19 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Rick Explains on http://localhost:${PORT}`);
-  console.log(`  script: ${hasClaude ? MODEL : "DEMO (set ANTHROPIC_API_KEY)"}`);
-  console.log(`  voice:  ${tts ?? "none — silent captions (set ELEVENLABS_API_KEY or OPENAI_API_KEY)"}`);
+  if (hasClaude) console.log(`  script: Claude (${MODEL})`);
+  else {
+    const { reachable, models } = await ollamaStatus();
+    const model = reachable ? pickOllamaModel(models) : null;
+    if (model) console.log(`  script: Ollama (${model})`);
+    else if (reachable) console.log("  script: DEMO. Ollama is running but has no models: run `ollama pull llama3.1:8b`");
+    else console.log(`  script: DEMO. Start Ollama (${OLLAMA_URL}) for local scripts, or set ANTHROPIC_API_KEY`);
+  }
+  console.log(`  voice:  ${tts === "kokoro" ? `Kokoro, local (${KOKORO_VOICE})` : tts}`);
+  if (tts === "kokoro") {
+    // Warm up in the background so the first video doesn't wait on the download.
+    kokoro().then(() => console.log("  Kokoro ready")).catch((err) => console.error("  Kokoro failed to load:", err.message));
+  }
 });

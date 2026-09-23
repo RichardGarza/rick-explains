@@ -27,6 +27,7 @@
       <input id="url" type="url" placeholder="https://example.com/some-ai-announcement" />
       <textarea id="text" rows="8" placeholder="Paste the article or announcement here…" hidden></textarea>
       <div class="row">
+        <label id="model-pick" hidden>Model <select id="model"></select></label>
         <label>Length
           <select id="seconds">
             <option value="30">~30 s</option>
@@ -46,6 +47,7 @@
       <div id="beats"></div>
       <div class="row">
         <label class="check"><input type="checkbox" id="voice" checked /> Voice</label>
+        <label class="check" id="voice-pick" hidden>Rick sounds like <select id="voice-id"></select></label>
         <label class="check"><input type="checkbox" id="monitor" checked /> Hear it while rendering</label>
         <button id="render" class="primary">Render video</button>
       </div>

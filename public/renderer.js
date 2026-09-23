@@ -22,11 +22,11 @@ const BODY_FONT = `"Inter", "Segoe UI", system-ui, sans-serif`;
 
 // ---------- audio ----------
 
-async function fetchSpeech(ctx, text) {
+async function fetchSpeech(ctx, text, voice) {
   const r = await fetch("/api/tts", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, voice }),
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `TTS HTTP ${r.status}`);
   return ctx.decodeAudioData(await r.arrayBuffer());
@@ -104,13 +104,13 @@ function chunkWords(words, max = 4) {
 }
 
 /** Builds timing for every beat. Fetches TTS audio when useVoice is true. */
-export async function prepare(script, { ctx, useVoice, onProgress }) {
+export async function prepare(script, { ctx, useVoice, voice, onProgress }) {
   const beats = [];
   let t = 0.3;
   for (let i = 0; i < script.beats.length; i++) {
     onProgress?.(`Recording voice ${i + 1}/${script.beats.length}…`);
     const b = script.beats[i];
-    const audio = useVoice ? await fetchSpeech(ctx, b.narration) : null;
+    const audio = useVoice ? await fetchSpeech(ctx, b.narration, voice) : null;
     const start = t;
     const burpAt = b.burp ? t : null;
     if (b.burp) t += BURP_LEN;

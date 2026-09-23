@@ -24,13 +24,31 @@ function msg(id, text, error = false) {
 
 // ---- setup ----
 
-config = await fetch("/api/config").then((r) => r.json()).catch(() => config);
-const bits = [];
-if (!config.claude) bits.push("Demo mode: no ANTHROPIC_API_KEY, so you'll get a sample script.");
-if (!config.tts) bits.push("No voice key set: videos render with captions only.");
-$("status-line").textContent = bits.join(" ");
-$("voice").checked = Boolean(config.tts);
-$("voice").disabled = !config.tts;
+config = await fetch("/api/config").then((r) => r.json()).catch(() => ({ script: { provider: "demo" }, voice: { provider: "kokoro" } }));
+const { script: sc, voice: vc } = config;
+const scriptLabel =
+  sc.provider === "claude" ? `Claude (${sc.model})`
+  : sc.provider === "ollama" ? `local ${sc.model} via Ollama`
+  : sc.ollamaReachable ? "demo script. Ollama is running but has no model: run `ollama pull llama3.1:8b`"
+  : "demo script. Start Ollama for real ones";
+const voiceLabel = vc.provider === "kokoro" ? "Kokoro (local, free)" : vc.provider;
+$("status-line").textContent = `Script: ${scriptLabel} · Voice: ${voiceLabel}`;
+
+if (sc.provider === "ollama" && sc.models?.length > 1) {
+  $("model-pick").hidden = false;
+  for (const m of sc.models) $("model").add(new Option(m, m, m === sc.model, m === sc.model));
+}
+if (vc.provider === "kokoro") {
+  fetch("/api/voices").then((r) => r.json()).then((voices) => {
+    const english = voices.filter((v) => v.language?.startsWith("en"));
+    if (!english.length) return;
+    for (const v of english) {
+      const label = `${v.name} (${v.id.startsWith("b") ? "British" : "American"} ${v.gender === "Male" ? "man" : "woman"})`;
+      $("voice-id").add(new Option(label, v.id, v.id === vc.voice, v.id === vc.voice));
+    }
+    $("voice-pick").hidden = false;
+  }).catch(() => {});
+}
 
 for (const tab of document.querySelectorAll(".tab")) {
   tab.addEventListener("click", () => {
@@ -49,8 +67,9 @@ $("go").addEventListener("click", async () => {
     msg("input-msg", mode === "url" ? "Reading the article…" : "Reading…");
     const article = await api("/api/extract", mode === "url" ? { url: $("url").value.trim() } : { text: $("text").value });
     msg("input-msg", `Got ${article.text.split(/\s+/).length.toLocaleString()} words${article.title ? ` from “${article.title}”` : ""}. Rick is writing…`);
-    script = await api("/api/script", { ...article, seconds: Number($("seconds").value) });
-    msg("input-msg", script.demo ? "Demo script loaded (set ANTHROPIC_API_KEY for real ones)." : "Script ready.");
+    if (sc.provider === "ollama") msg("input-msg", "Rick is writing on your machine. This can take a minute or two…");
+    script = await api("/api/script", { ...article, seconds: Number($("seconds").value), model: $("model").value || undefined });
+    msg("input-msg", script.demo ? "Demo script loaded. Start Ollama (with a model) or set ANTHROPIC_API_KEY for real ones." : script.note || "Script ready.");
     showScript();
   } catch (err) {
     msg("input-msg", err.message, true);
@@ -117,7 +136,12 @@ async function doRender() {
   const ctx = new AudioContext();
   try {
     await document.fonts.load(`80px Anton`).catch(() => {});
-    const plan = await prepare(script, { ctx, useVoice: $("voice").checked, onProgress: (t) => msg("script-msg", t) });
+    const plan = await prepare(script, {
+      ctx,
+      useVoice: $("voice").checked,
+      voice: $("voice-id").value || undefined,
+      onProgress: (t) => msg("script-msg", t),
+    });
     msg("script-msg", "Rendering… keep this tab in front.");
     const blob = await render(plan, {
       canvas: $("canvas"),
